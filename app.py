@@ -142,9 +142,9 @@ def clean_location_df(df):
     df.columns = df.columns.str.title()
     return df[['Country', 'State', 'City']]
 
-df1 = clean_location_df(pd.read_csv("data/dataset1.csv"))
-df2 = clean_location_df(pd.read_csv("data/dataset2.csv"))
-df3 = clean_location_df(pd.read_csv("data/dataset3.csv"))
+df1 = clean_location_df(pd.read_csv("dataset1.csv"))
+df2 = clean_location_df(pd.read_csv("dataset2.csv"))
+df3 = clean_location_df(pd.read_csv("dataset3.csv"))
 
 combined_locations = pd.concat([df1, df2, df3], ignore_index=True)
 combined_locations.dropna(subset=['Country', 'State', 'City'], inplace=True)

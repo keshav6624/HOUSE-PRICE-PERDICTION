@@ -40,6 +40,15 @@ if 'logged_in' not in st.session_state:
 if 'users' not in st.session_state:
     st.session_state['users'] = load_users()
 
+if 'model' not in st.session_state:
+    st.session_state['model'] = None
+    st.session_state['df'] = None
+
+if 'countries' not in st.session_state:
+    st.session_state['countries'] = None
+    st.session_state['states_by_country'] = None
+    st.session_state['cities_by_state'] = None
+
 # -------------------------
 # Global Style
 # -------------------------
@@ -94,6 +103,52 @@ def show_login_register():
             if st.session_state['users'].get(username) == hashed_input_pass:
                 st.session_state['logged_in'] = True
                 st.session_state['login_user'] = username
+                # Load model and data only on successful login
+                if st.session_state['model'] is None:
+                    data = sklearn.datasets.fetch_california_housing()
+                    df = pd.DataFrame(data.data, columns=data.feature_names)
+                    df['price'] = data.target
+                    X = df.drop(['price'], axis=1)
+                    y = df['price']
+                    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=2)
+                    model = XGBRegressor(objective='reg:squarederror', random_state=42)
+                    model.fit(X_train, y_train)
+                    st.session_state['model'] = model
+                    st.session_state['df'] = df
+
+                    # Load and process location data only once
+                    def clean_location_df(df):
+                        df = df.rename(columns=lambda x: x.strip())
+                        df.columns = df.columns.str.title()
+                        return df[['Country', 'State', 'City']]
+
+                    df1 = clean_location_df(pd.read_csv("dataset1.csv"))
+                    df2 = clean_location_df(pd.read_csv("dataset2.csv"))
+                    df3 = clean_location_df(pd.read_csv("dataset3.csv"))
+
+                    combined_locations = pd.concat([df1, df2, df3], ignore_index=True)
+                    combined_locations.dropna(subset=['Country', 'State', 'City'], inplace=True)
+
+                    countries = sorted(combined_locations['Country'].unique())
+
+                    states_by_country = {
+                        country: sorted(combined_locations[combined_locations['Country'] == country]['State'].unique())
+                        for country in countries
+                    }
+
+                    cities_by_state = {
+                        (row['Country'], row['State']): sorted(
+                            combined_locations[
+                                (combined_locations['Country'] == row['Country']) &
+                                (combined_locations['State'] == row['State'])
+                            ]['City'].unique()
+                        )
+                        for _, row in combined_locations[['Country', 'State']].drop_duplicates().iterrows()
+                    }
+                    st.session_state['countries'] = countries
+                    st.session_state['states_by_country'] = states_by_country
+                    st.session_state['cities_by_state'] = cities_by_state
+
                 st.success(f"Welcome, {username}!")
                 st.rerun()
             else:
@@ -121,55 +176,9 @@ def show_login_register():
                 st.rerun()
 
 # -------------------------
-# Load Model and Data
-# -------------------------
-def load_model_and_data():
-    data = sklearn.datasets.fetch_california_housing()
-    df = pd.DataFrame(data.data, columns=data.feature_names)
-    df['price'] = data.target
-    X = df.drop(['price'], axis=1)
-    y = df['price']
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=2)
-    model = XGBRegressor(objective='reg:squarederror', random_state=42)
-    model.fit(X_train, y_train)
-    return model, df, X_train, y_train, X_test, y_test
-
-# -------------------------
-# Location Dataset Loading
-# -------------------------
-def clean_location_df(df):
-    df = df.rename(columns=lambda x: x.strip())
-    df.columns = df.columns.str.title()
-    return df[['Country', 'State', 'City']]
-
-df1 = clean_location_df(pd.read_csv("dataset1.csv"))
-df2 = clean_location_df(pd.read_csv("dataset2.csv"))
-df3 = clean_location_df(pd.read_csv("dataset3.csv"))
-
-combined_locations = pd.concat([df1, df2, df3], ignore_index=True)
-combined_locations.dropna(subset=['Country', 'State', 'City'], inplace=True)
-
-countries = sorted(combined_locations['Country'].unique())
-
-states_by_country = {
-    country: sorted(combined_locations[combined_locations['Country'] == country]['State'].unique())
-    for country in countries
-}
-
-cities_by_state = {
-    (row['Country'], row['State']): sorted(
-        combined_locations[
-            (combined_locations['Country'] == row['Country']) &
-            (combined_locations['State'] == row['State'])
-        ]['City'].unique()
-    )
-    for _, row in combined_locations[['Country', 'State']].drop_duplicates().iterrows()
-}
-
-# -------------------------
 # Pages
 # -------------------------
-def show_prediction_page(model):
+def show_prediction_page():
     st.subheader("📊 Predict a New House Price")
     with st.expander("Enter House Features", expanded=True):
         col1, col2 = st.columns(2)
@@ -182,17 +191,17 @@ def show_prediction_page(model):
         with col2:
             Population = st.number_input("Population", min_value=0.0, value=1000.0)
             AveOccup = st.number_input("Average Occupancy", min_value=0.0, value=3.0)
-            Country = st.selectbox("Country", countries)
-            State = st.selectbox("State", states_by_country.get(Country, []))
-            City = st.selectbox("City", cities_by_state.get((Country, State), []))
+            Country = st.selectbox("Country", st.session_state['countries'] or [])
+            State = st.selectbox("State", st.session_state['states_by_country'].get(Country, []) if st.session_state['states_by_country'] else [])
+            City = st.selectbox("City", st.session_state['cities_by_state'].get((Country, State), []) if st.session_state['cities_by_state'] else [])
 
     if st.button("Predict Price", use_container_width=True):
         default_lat = 34.0
         default_long = -118.0
 
         input_data = pd.DataFrame([[MedInc, HouseAge, AveRooms, AveBedrms, Population, AveOccup, default_lat, default_long]],
-                                   columns=['MedInc', 'HouseAge', 'AveRooms', 'AveBedrms', 'Population', 'AveOccup', 'Latitude', 'Longitude'])
-        prediction = model.predict(input_data)[0]
+                                    columns=['MedInc', 'HouseAge', 'AveRooms', 'AveBedrms', 'Population', 'AveOccup', 'Latitude', 'Longitude'])
+        prediction = st.session_state['model'].predict(input_data)[0]
         predicted_price = prediction * 100_000
         st.success(f"🏠 Predicted House Price: ${predicted_price:,.2f}")
 
@@ -218,7 +227,7 @@ def show_prediction_page(model):
             report_df = pd.concat([history_df, report_df], ignore_index=True)
         report_df.to_csv(history_file, index=False)
 
-def show_bulk_upload_page(model):
+def show_bulk_upload_page():
     st.subheader("📁 Upload Dataset for Bulk Prediction")
     uploaded_file = st.file_uploader("📂 Upload CSV", type=["csv"])
 
@@ -231,7 +240,7 @@ def show_bulk_upload_page(model):
                 user_df['Latitude'] = 34.0
                 user_df['Longitude'] = -118.0
 
-                predictions = model.predict(user_df[required_cols + ['Latitude', 'Longitude']])
+                predictions = st.session_state['model'].predict(user_df[required_cols + ['Latitude', 'Longitude']])
                 user_df["Predicted Price ($)"] = predictions * 100_000
                 st.success("✅ Predictions completed.")
                 st.dataframe(user_df)
@@ -247,18 +256,23 @@ def show_history_page():
     st.subheader("🔓 My Prediction History")
     history_file = os.path.join(HISTORY_DIR, f"{st.session_state['login_user']}_history.csv")
     if os.path.exists(history_file):
-        history_df = pd.read_csv(history_file)
-        st.dataframe(history_df)
+        try:
+            history_df = pd.read_csv(history_file)
+            st.dataframe(history_df)
+        except pd.errors.EmptyDataError:
+            st.info("No history found yet.")
+        except FileNotFoundError:
+            st.info("No history found yet.")
     else:
         st.info("No history found yet.")
 
-def show_dataset_info_page(df):
+def show_dataset_info_page():
     st.subheader("📈 Dataset Overview")
     if st.checkbox("Show Raw Dataset"):
-        st.dataframe(df.head())
+        st.dataframe(st.session_state['df'].head())
 
     if st.checkbox("Show Correlation Heatmap"):
-        correlation = df.corr()
+        correlation = st.session_state['df'].corr()
         fig, ax = plt.subplots(figsize=(10, 10))
         sns.heatmap(correlation, cbar=True, square=True, fmt='.1f', annot=True,
                     annot_kws={'size': 8}, cmap='Blues', ax=ax)
@@ -268,25 +282,28 @@ def show_dataset_info_page(df):
 # Run App
 # -------------------------
 if st.session_state['logged_in']:
-    model, df, X_train, y_train, X_test, y_test = load_model_and_data()
+    if st.session_state['model'] is not None and st.session_state['df'] is not None and st.session_state['countries'] is not None:
+        st.sidebar.title("🔧 Navigation")
+        choice = st.sidebar.radio("Go to", ["Predict", "Bulk Upload", "History", "Dataset Info"])
+        st.sidebar.markdown("""---""")
+        if st.sidebar.button("🚪 Logout", use_container_width=True):
+            st.session_state['logged_in'] = False
+            st.session_state.pop('login_user', None)
+            st.rerun()
 
-    st.sidebar.title("🔧 Navigation")
-    choice = st.sidebar.radio("Go to", ["Predict", "Bulk Upload", "History", "Dataset Info"])
-    st.sidebar.markdown("""---""")
-    if st.sidebar.button("🚪 Logout", use_container_width=True):
+        st.markdown("""<style>.block-container { padding-top: 1rem; }</style>""", unsafe_allow_html=True)
+
+        if choice == "Predict":
+            show_prediction_page()
+        elif choice == "Bulk Upload":
+            show_bulk_upload_page()
+        elif choice == "History":
+            show_history_page()
+        elif choice == "Dataset Info":
+            show_dataset_info_page()
+    else:
+        st.error("Error: Model or data not loaded. Please log in again.")
         st.session_state['logged_in'] = False
-        st.session_state.pop('login_user', None)
         st.rerun()
-
-    st.markdown("""<style>.block-container { padding-top: 1rem; }</style>""", unsafe_allow_html=True)
-
-    if choice == "Predict":
-        show_prediction_page(model)
-    elif choice == "Bulk Upload":
-        show_bulk_upload_page(model)
-    elif choice == "History":
-        show_history_page()
-    elif choice == "Dataset Info":
-        show_dataset_info_page(df)
 else:
     show_login_register()

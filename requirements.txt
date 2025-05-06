@@ -1,0 +1,8 @@
+streamlit>=1.30.0
+pandas>=1.5.0
+numpy>=1.21.0
+scikit-learn>=1.2.0
+xgboost>=1.7.0
+matplotlib>=3.5.0
+seaborn>=0.11.2
+python-dotenv>=1.0.0  # If you plan to use environment variables later
